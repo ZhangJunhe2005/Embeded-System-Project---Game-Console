@@ -1,149 +1,228 @@
-# Pong Game Engine
+# Game Console - STM32L476 Multi-Game System
 
-A complete implementation of the classic Pong game demonstrating core game development concepts: object-oriented design, collision detection, and the standard game loop pattern.
+A complete game console implementation on STM32L476RG Nucleo board featuring three distinct games with shared hardware abstractions and rendering infrastructure.
 
 ## Overview
 
-This project implements Pong with a clean architecture:
-- **Ball**: Moves in straight lines with velocity, bounces off walls and paddle
-- **Paddle**: Controlled by joystick up/down, constrained to screen bounds
-- **Collisions**: AABB (Axis-Aligned Bounding Box) collision detection between ball and paddle
-- **Game State**: Lives system (start with 4, game over at 0) and score tracking
-- **Audio**: Buzzer sounds on collisions (wall: 1200 Hz, paddle: 800 Hz)
+This project implements a multi-game console with a modular architecture:
+- **Game 1 - Apex Training**: First-person aiming training simulation with robot targets
+- **Game 2 - Turbo Overdrive**: Pseudo-3D racing game with procedural track generation
+- **Game 3 - Silk Knight: Abyss Patrol**: Pixel-art platformer with dynamic enemy AI
 
-## Code Organization
+All games share common infrastructure:
+- **Hardware**: PS2 mouse/keyboard input, ST7789V2 LCD display (240×240), WS2812B RGB LED strip
+- **Audio**: PWM-based buzzer with frequency control
+- **Rendering**: Optimized line-by-line LCD rendering with DMA acceleration
+- **Assets**: QSPI flash storage (W25Q128) for large sprite sheets and backgrounds
+
+## Project Structure
 
 ```
-PongEngine/
-├── PongEngine.h/c       Main game engine (collisions, game state)
-├── Ball.h/c              Ball object (position, velocity)
-├── Paddle.h/c            Paddle object (joystick input)
-Core/Inc/
-└── Utils.h               AABB collision detection, shared types
-Core/Src/
-└── main.c                Game initialization and main loop
+.
+├── game_1/               Apex Training (aiming/target simulation)
+│   ├── Game_1.c          Main game loop, input handling, rendering
+│   └── Game_1.h          Public interface
+├── game_2/               Turbo Overdrive (pseudo-3D racing)
+│   ├── Game_2.c          Game logic, road rendering, collision
+│   ├── Game_2.h          Public interface
+│   ├── assets.c          Car sprites and obstacle graphics
+│   ├── music.c           BGM and sound effects
+│   └── ...assets
+├── game_3/               Silk Knight: Abyss Patrol (platformer)
+│   ├── Game_3.c          Game logic, player/enemy physics, rendering
+│   ├── Game_3.h          Public interface
+│   ├── g3_audio.c        Sound effects and buzzer control
+│   └── ...game assets
+├── shared/               Shared utilities across all games
+│   ├── Menu.h/c          Multi-game menu system
+│   ├── Joystick/         Analog joystick input abstraction
+│   ├── Renderer/         LCD drawing primitives and line buffering
+│   ├── Audio/            Buzzer driver with frequency control
+│   └── ...common utilities
+├── Drivers/              STM32 HAL and peripheral drivers
+├── Core/                 Startup code and system initialization
+└── ST7789V2_Driver/      LCD display controller driver
 ```
 
-## The Game Loop
+## Game Descriptions
 
-Every frame (at 60 FPS), the game follows a simple pattern:
+### Game 1: Apex Training
+**Gameplay**: First-person aiming challenge against scaling robot targets.
+
+- **Input**: PS2 mouse for crosshair control, joystick for movement
+- **Mechanics**:
+  - Multiple difficulty levels with progressively challenging robot enemies
+  - Three weapon classes: R99 carbine (high RoF), Heping shield (burst fire), Qiedao knife (melee)
+  - Health/armor system with damage scaling
+  - Pseudo-3D background with parallax layers from QSPI flash
+- **Features**:
+  - Real-time hit particle effects
+  - Dynamic crosshair with aim correction
+  - RGB LED feedback for status and level progression
+  - Performance monitoring (INA219 power sensor)
+
+### Game 2: Turbo Overdrive
+**Gameplay**: Endless pseudo-3D racing with procedurally generated track.
+
+- **Input**: Joystick for steering (left/right), speed auto-acceleration
+- **Mechanics**:
+  - Procedural road generation with smooth curves
+  - Three distinct environments (country roads with vegetation, city streets)
+  - Dynamic obstacles: traffic cars, yellow hazards, boost pickups
+  - Time-based endurance: checkpoints grant time bonuses and health restoration
+  - Multiple vehicle types with different handling characteristics
+- **Features**:
+  - Perspective-correct road rendering from lookup tables
+  - Sprite-based scenery (houses, buildings) with depth culling
+  - Collision detection using dilated sprite masks
+  - Boost meter system with visual feedback
+  - Best distance record saved to flash
+
+### Game 3: Silk Knight: Abyss Patrol
+**Gameplay**: Pixel-art platformer with knight character progression through three levels.
+
+- **Input**: Joystick for movement (left/right), attack button trigger
+- **Mechanics**:
+  - Three knight classes: sword, lance, axe (each with different attack patterns)
+  - Three difficulty levels with varying enemy density and damage scaling
+  - Two-button combat: movement + one-button attack
+  - Platform navigation with hazard tiles (spikes) and collectibles (healing)
+  - Enemy AI with patrol patterns and collision response
+  - Three-level progression with difficulty scaling
+- **Features**:
+  - Real-time platform collision detection (AABB)
+  - Seven-segment display for level/knight selection
+  - RGB LED health indicator bar
+  - Dynamic tile-based level generation
+  - Audio feedback for hits, heals, and level progression
+
+## Technical Architecture
+
+### Game Loop Pattern (All Games)
+
+Each game follows a unified frame-based loop:
 
 ```
 INPUT → UPDATE → RENDER
   ↓       ↓        ↓
- Read     Game     Draw to
- joy      logic    screen
- stick
+Read     Game     Draw to
+input    logic    screen
 ```
 
-### Main Loop in main.c
+**Timing**: Target 60 FPS (16.67ms per frame) with frame-rate independent physics using delta-time.
 
-```c
-uint32_t last_tick = HAL_GetTick();
+### Input System
 
-while (!game_over) {
-    // Frame timing: aim for 60 FPS (~16.67ms per frame)
-    uint32_t now = HAL_GetTick();
-    if ((now - last_tick) < FRAME_TIME_MS) {
-        continue;  // Skip if not enough time has passed
-    }
-    last_tick = now;
+**Joystick** (analog stick with ADC):
+- 8-directional or continuous angle measurement
+- Magnitude 0-255 for sensitivity control
+- Used by all games for primary character control
 
-    // STEP 1: INPUT - Read joystick
-    Joystick_Read(&joystick_cfg, &joystick_data);
-    UserInput input = Joystick_GetInput(&joystick_data);
+**PS2 Keyboard/Mouse** (Game 1 exclusive):
+- PS2 clock/data bit-banging protocol
+- Mouse streaming mode for Game 1 aiming
+- ~60 Hz polling rate
 
-    // STEP 2: UPDATE - Game logic
-    update_pong(input);
+### Rendering System
 
-    // STEP 3: RENDER - Draw to screen
-    render_pong();
-}
+**LCD Driver** (ST7789V2):
+- 240×240 RGB565 display
+- Line-by-line rendering with DMA-accelerated SPI transfers
+- Double-buffering in RAM for flicker-free animation
+
+**Asset Storage** (QSPI Flash W25Q128):
+- **Game 1**: Weapon animations and 3D backgrounds stored at 0x00300000 (12 MB partition)
+- **Game 2**: Car sprites and obstacle graphics in program memory
+- **Game 3**: Tileset and sprite data in program memory
+
+### Audio System
+
+**Buzzer** (PWM on TIM3):
+- 20 kHz PWM carrier frequency
+- Sound generation: 200-5000 Hz range
+- Non-blocking duration-based beep system
+
+**Music/SFX**:
+- Game 1: Weapon feedback tones, impact sounds
+- Game 2: Engine rumble, collision warnings, boost activation
+- Game 3: Attack hits, enemy defeat, level clear fanfare
+
+### Lighting/Feedback
+
+**WS2812B RGB LED Strip** (10 LEDs):
+- Game 1: Armor/health status bar, level progression colors
+- Game 2: Speed meter (green→yellow→red), boost ready indicator
+- Game 3: Health indicator with flash feedback on damage
+
+## Building and Deployment
+
+**Build System**: CMake
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
 ```
 
-### What Happens in Each Step
+**Flash Memory**:
+- STM32L476 internal flash (1 MB) for code
+- W25Q128 QSPI flash (16 MB) for large assets (Game 1)
 
-#### Step 1: INPUT (Joystick Reading)
+**Hardware Requirements**:
+- STM32L476RG Nucleo board
+- ST7789V2 LCD module (SPI interface)
+- PS2 keyboard/mouse (Game 1)
+- Analog joystick
+- WS2812B RGB strip
+- Optional: INA219 power monitor (Game 1)
 
-```c
-Joystick_Read(&joystick_cfg, &joystick_data);
-UserInput input = Joystick_GetInput(&joystick_data);
-```
+## Game-Specific Controls
 
-- Reads X and Y values from joystick ADC
-- Converts raw ADC values to direction and magnitude
-- Returns a `UserInput` struct with:
-  - `direction`: N, S, E, W, NE, SE, NW, SW, or CENTER
-  - `magnitude`: strength of input (0 to 255)
+| Game | Input | Action |
+|------|-------|--------|
+| **Game 1** | Mouse | Aim crosshair |
+| **Game 1** | Left Mouse | Fire weapon |
+| **Game 1** | Joystick | Movement/dodge |
+| **Game 2** | Joystick Left/Right | Steer |
+| **Game 2** | Joystick Up | Accelerate (auto) |
+| **Game 3** | Joystick Left/Right | Move |
+| **Game 3** | Button (PC13) | Jump/Attack |
 
-#### Step 2: UPDATE (Game Logic)
+## Development Notes
 
-```c
-void update_pong(UserInput input) {
-    uint8_t lives = PongEngine_Update(&pong_engine, input);
-    if (lives == 0) {
-        game_over = 1;
-    }
-}
-```
+### Adding a New Game
 
-This calls `PongEngine_Update()`, which does:
+1. Create `game_N/Game_N.h` with entry point: `MenuState GameN_Run(void)`
+2. Implement `MenuState GameN_Run(void)` in `game_N/Game_N.c`
+3. Register in menu system (`shared/Menu.c`)
+4. Return `MENU_STATE_HOME` to exit back to main menu
 
-1. **Paddle Update** - Move paddle based on joystick input (N/S only)
-   - File: [Paddle/Paddle.c](Paddle/Paddle.c#L26)
-   - Constraints: Paddle stays within screen bounds (y = 0 to 200)
+### Shared Utilities
 
-2. **Ball Update** - Move ball based on velocity
-   - File: [Ball/Ball.c](Ball/Ball.c#L18)
-   - Simple: `x += velocity.x`, `y += velocity.y`
+- `shared/Menu.h`: Game selection and state machine
+- `shared/Joystick/`: `Joystick_Read()` and input direction parsing
+- `shared/Renderer/`: `LCD_FillBuffer()`, `LCD_DrawPixel()`, line rendering
+- `shared/Audio/`: `Buzzer_Play(frequency, duration)`
 
-3. **Wall Collision Check** - Bounce ball off top/bottom/right walls
-   - File: [PongEngine/PongEngine.c](PongEngine/PongEngine.c#L63)
-   - Simple boundary checks: `if (ball->y <= 0) reverse Y velocity`
+### Performance Considerations
 
-4. **Paddle Collision Check** - Use AABB to detect ball-paddle overlap
-   - File: [PongEngine/PongEngine.c](PongEngine/PongEngine.c#L101)
-   - Only collision test using `AABB_Collides()`
-   - If collision: reverse ball X velocity, play sound (800 Hz), increment score
+- **Game 1**: CPU-bound on rendering 3D background from QSPI at 60 FPS
+- **Game 2**: Memory-constrained with procedural track generation; uses lookup tables
+- **Game 3**: Tile-based collision detection scales with level size
 
-5. **Goal Check** - Did ball leave the play area?
-   - File: [PongEngine/PongEngine.c](PongEngine/PongEngine.c#L129)
-   - If `ball->x < 0`: decrement lives, reset ball to center
+## Hardware Connections
 
-6. **Buzzer Update** - Stop beep sound (non-blocking decay)
-   - Allows beep to stop automatically without blocking main loop
-
-#### Step 3: RENDER (Drawing)
-
-```c
-void render_pong(void) {
-    LCD_Fill_Buffer(0);          // 1. Clear screen
-    PongEngine_Draw(&pong_engine);          // 2. Draw objects
-    // Display lives and score as text
-}
-```
-
-This happens once per frame and includes:
-1. Clear entire LCD buffer
-2. Draw ball sprite (6x6 pixels)
-3. Draw paddle sprite (4x40 pixels)
-4. Draw lives and score as text
+| STM32L476 Pin | Function | Device |
+|---------------|----------|--------|
+| PA4-PA6 | SPI LCD | ST7789V2 |
+| PB7 | TIM4_CH2 PWM | WS2812B data |
+| PA7 | SPI QSPI | W25Q128 |
+| PA8, PB10-11 | I2C | INA219 (optional) |
+| PA2, PA3 | ADC | Joystick X/Y |
+| PA9-PA11 | PS2 | Keyboard/Mouse |
+| PC13 | GPIO In | Action button |
+| PB5, PB6 | GPIO | Seven-segment SEG G, F |
 
 ---
 
-## Suggested Student Activities
-
-### Activity 1: Change Ball Speed and Size
-Find where the ball is initialized in `main.c` and change the speed and size parameters to `PongEngine_Init()`.
-
-### Activity 2: Make the Paddle Smaller
-Find where the paddle height is set in `main.c` and reduce it. Rebuild and test.
-
-### Activity 3: Add Sound When a Life is Lost
-Find `PongEngine_CheckGoal()` in `PongEngine.c` where `lives` is decremented. Call `PongEngine_Beep()` with a low frequency (try 400 Hz).
-
-### Activity 4: Add a Game Over Sound
-After the main game loop ends in `main.c`, play a buzzer sound before displaying the game over screen. Try frequencies between 200-500 Hz for effect.
-
-### Activity 5: Speed Up Ball After Every 10 Points
-Track the score in `PongEngine.c`. When the score increases by 10, increase the ball velocity by 10% and play a high-pitched beep (try 2000 Hz). Hint: in `PongEngine_Update()`, you can use `Paddle_GetScore()` to check the current score.
+**Target Platform**: STM32L476RG @ 80 MHz, 96 KB RAM, 1 MB Flash  
+**Display**: 240×240 RGB565 LCD @ 60 FPS  
+**Language**: C (C99 with ARM Cortex-M4 extensions)
