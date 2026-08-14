@@ -67,7 +67,7 @@ All games share common infrastructure:
 - **Input**: Joystick for steering (left/right), speed auto-acceleration
 - **Mechanics**:
   - Procedural road generation with smooth curves
-  - Three distinct environments (country roads with vegetation, city streets)
+  - Two distinct environments (country roads with vegetation, city streets)
   - Dynamic obstacles: traffic cars, yellow hazards, boost pickups
   - Time-based endurance: checkpoints grant time bonuses and health restoration
   - Multiple vehicle types with different handling characteristics
